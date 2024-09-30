@@ -140,7 +140,7 @@ public function show($id)
         'price' => $product->price,
         'category_name' => $product->category->name ?? null,
         'supplier_name' => $product->supplier->name ?? null,
-        'image_name' => $imageName, // Return only the image filename
+        'image_name' => $$product->image ?? null,
         'created_at' => $product->created_at,
         'updated_at' => $product->updated_at,
     ]);
