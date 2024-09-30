@@ -130,7 +130,7 @@ public function show($id)
     }
 
     // Extract the image filename from the image path
-    $imageName = $product->image ? basename($product->image) : null;
+    //$imageName = $product->image ? basename($product->image) : null;
 
     // Format the response to include category, supplier, and image name
     return response()->json([
