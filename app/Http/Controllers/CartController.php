@@ -51,9 +51,9 @@ class CartController extends Controller
 
             DB::commit();
 
+            // Return only the message
             return response()->json([
                 'message' => 'Item added to cart',
-                'order' => $order->load('items.product'),
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
@@ -61,63 +61,85 @@ class CartController extends Controller
         }
     }
 
+
     public function addSpecialOfferItem(Request $request)
-{
-    // Retrieve request data
-    $offerId = $request->input('offer_id');
-    $quantity = $request->input('quantity');
-    $userId = $request->input('user_id');
+    {
+        // Retrieve request data
+        $offerId = $request->input('offer_id');
+        $quantity = $request->input('quantity');
+        $userId = $request->input('user_id');
 
-    // Find the special offer
-    $offer = SpecialOffer::find($offerId);
-    if (!$offer) {
-        return response()->json(['message' => 'Special offer not found'], 404);
+        // Find the special offer and load the associated product
+        $offer = SpecialOffer::with('product')->find($offerId);
+        if (!$offer || !$offer->product) {
+            return response()->json(['message' => 'Special offer or related product not found'], 404);
+        }
+
+        // Calculate price using the new_price from the special offer
+        $price = $offer->new_price * $quantity;
+
+        // Use a database transaction to ensure atomicity
+        DB::beginTransaction();
+
+        try {
+            // Find or create a pending order for the user
+            $order = Order::firstOrCreate(
+                ['user_id' => $userId, 'status' => 'pending'],
+                ['total_price' => 0]
+            );
+
+            // Add or update the order item based on the associated product
+            // Check if the product already exists in the cart
+            $orderItem = $order->items()->where('product_id', $offer->product->id)->first();
+
+            if ($orderItem) {
+                // If it exists, update the quantity and price
+                $orderItem->quantity += $quantity; // Increment the quantity
+                $orderItem->price = $offer->new_price * $orderItem->quantity; // Recalculate price
+                $orderItem->save();
+            } else {
+                // If it doesn't exist, create a new order item
+                $orderItem = $order->items()->create([
+                    'product_id' => $offer->product->id,
+                    'quantity' => $quantity,
+                    'price' => $price,
+                ]);
+            }
+
+            // Update the total price of the order
+            $order->total_price = $order->items()->sum('price');
+            $order->save();
+
+            DB::commit();
+
+            // Return only necessary data
+            return response()->json([
+                'message' => 'Special offer item added to cart',
+                'order_item' => [
+                    'id' => $orderItem->id,
+                    'product_id' => $offer->product->id,
+                    'product_name' => $offer->product->name,
+                    'quantity' => $orderItem->quantity,
+                    'price' => $orderItem->price,
+                    'offer_name' => $offer->name,
+                    'offer_description' => $offer->description,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['message' => 'An error occurred', 'error' => $e->getMessage()], 500);
+        }
     }
 
-    // Calculate price using the new_price from the special offer
-    $price = $offer->new_price * $quantity;
 
-    // Use a database transaction to ensure atomicity
-    DB::beginTransaction();
 
-    try {
-        // Find or create a pending order for the user
-        $order = Order::firstOrCreate(
-            ['user_id' => $userId, 'status' => 'pending'],
-            ['total_price' => 0]
-        );
-
-        // Add or update the order item based on the special offer
-        $orderItem = $order->items()->updateOrCreate(
-            ['product_id' => $offer->id],  // assuming you store offer_id or use a new column
-            ['quantity' => $quantity, 'price' => $price]
-        );
-
-        // Update the total price of the order
-        $order->total_price = $order->items()->sum('price');
-        $order->save();
-
-        DB::commit();
-
-        return response()->json([
-            'message' => 'Special offer item added to cart',
-            'order' => $order->load('items.product'),  // adjust this if needed
-        ]);
-    } catch (\Exception $e) {
-        DB::rollBack();
-        return response()->json(['message' => 'An error occurred', 'error' => $e->getMessage()], 500);
-    }
-}
 
 
 
 
     public function viewCart($userId)
     {
-        // Retrieve the user_id from the request
-        //$userId = $request->input('user_id');
-
-        // Validate that user_id exists
+        // Validate that the user exists
         $userExists = Users::find($userId);
         if (!$userExists) {
             return response()->json(['message' => 'User not found'], 404);
@@ -126,88 +148,100 @@ class CartController extends Controller
         // Retrieve the pending order for the user
         $order = Order::where('user_id', $userId)
             ->where('status', 'pending')
-            ->with('items.product') // Eager load the products
+            ->with('items.product') // Eager load the products through order items
             ->first();
 
         if (!$order) {
             return response()->json(['message' => 'Cart is empty'], 404);
         }
 
+        // Transform the data to return only specific details
+        $cartDetails = $order->items->map(function ($item) {
+            return [
+                'image' => $item->product->image,
+                'name' => $item->product->name,
+                'price_per_item' => $item->price / $item->quantity, // Assuming you store price per item in order_items
+                'quantity' => $item->quantity,
+                'total_price' => $item->price,
+            ];
+        });
+
+        // Return the transformed cart details
         return response()->json([
-            'order' => $order,
+            'cart' => $cartDetails,
         ]);
     }
 
 
 
     public function checkout(Request $request, $userId)
-{
-    // Validate that user_id exists
-    $userExists = Users::find($userId); // Ensure you are using the correct User model
-    if (!$userExists) {
-        return response()->json(['message' => 'User not found'], 404);
+    {
+        // Validate that user_id exists
+        $userExists = Users::find($userId); // Ensure you are using the correct User model
+        if (!$userExists) {
+            return response()->json(['message' => 'User not found'], 404);
+        }
+
+        // Retrieve the pending order for the user
+        $order = Order::where('user_id', $userId)
+            ->where('status', 'pending')
+            ->first();
+
+        if (!$order) {
+            return response()->json(['message' => 'No pending cart found'], 404);
+        }
+
+        // Validate delivery information and total price
+        $validatedData = $request->validate([
+            'delivery_name' => 'required|string|max:255',
+            'delivery_email' => 'required|email',
+            'delivery_address' => 'required|string',
+            'delivery_phone_number' => 'required|string|max:15',
+            'total_price' => 'required|numeric|min:0', // Ensure total price is passed and is a positive number
+        ]);
+
+        // Update the order status to 'completed', store delivery information and total price
+        $order->status = 'completed';
+        $order->delivery_name = $validatedData['delivery_name'];
+        $order->delivery_email = $validatedData['delivery_email'];
+        $order->delivery_address = $validatedData['delivery_address'];
+        $order->delivery_phone_number = $validatedData['delivery_phone_number'];
+        $order->total_price = $validatedData['total_price']; // Store total price from the frontend
+
+        // Save the order with delivery information and total price
+        $order->save();
+
+        return response()->json([
+            'message' => 'Order placed successfully',
+            'order' => $order->load('items.product'), // Load related items and products if needed
+        ]);
     }
 
-    // Retrieve the pending order for the user
-    $order = Order::where('user_id', $userId)
-        ->where('status', 'pending')
-        ->first();
 
-    if (!$order) {
-        return response()->json(['message' => 'No pending cart found'], 404);
+
+    public function deleteItem($item_id)
+    {
+        // Find the order item by ID
+        $orderItem = OrderItem::find($item_id);
+
+        // Check if the order item exists
+        if (!$orderItem) {
+            return response()->json(['message' => 'Order item not found'], 404);
+        }
+
+        // Find the associated order
+        $order = $orderItem->order;
+
+        // Delete the order item
+        $orderItem->delete();
+
+        // Update the total price of the order
+        $order->total_price = $order->items()->sum('price');
+        $order->save();
+
+        return response()->json([
+            'message' => 'Order item deleted successfully',
+            'order' => $order->load('items.product'),
+        ]);
     }
-
-    // Validate delivery information and total price
-    $validatedData = $request->validate([
-        'delivery_name' => 'required|string|max:255',
-        'delivery_email' => 'required|email',
-        'delivery_address' => 'required|string',
-        'delivery_phone_number' => 'required|string|max:15',
-        'total_price' => 'required|numeric|min:0', // Ensure total price is passed and is a positive number
-    ]);
-
-    // Update the order status to 'completed', store delivery information and total price
-    $order->status = 'completed';
-    $order->delivery_name = $validatedData['delivery_name'];
-    $order->delivery_email = $validatedData['delivery_email'];
-    $order->delivery_address = $validatedData['delivery_address'];
-    $order->delivery_phone_number = $validatedData['delivery_phone_number'];
-    $order->total_price = $validatedData['total_price']; // Store total price from the frontend
-
-    // Save the order with delivery information and total price
-    $order->save();
-
-    return response()->json([
-        'message' => 'Order placed successfully',
-        'order' => $order->load('items.product'), // Load related items and products if needed
-    ]);
-}
-
-
-
-public function deleteItem($item_id)
-{
-    // Find the order item by ID
-    $orderItem = OrderItem::find($item_id);
-
-    // Check if the order item exists
-    if (!$orderItem) {
-        return response()->json(['message' => 'Order item not found'], 404);
-    }
-
-    // Find the associated order
-    $order = $orderItem->order;
-
-    // Delete the order item
-    $orderItem->delete();
-
-    // Update the total price of the order
-    $order->total_price = $order->items()->sum('price');
-    $order->save();
-
-    return response()->json([
-        'message' => 'Order item deleted successfully',
-        'order' => $order->load('items.product'),
-    ]);
-}
 }

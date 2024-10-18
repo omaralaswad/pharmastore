@@ -55,9 +55,10 @@ class AuthController extends Controller
         return $this->respondWithToken($token);
     }
 
+    // Adjusted the 'direct' method to use JWTAuth
     public function direct()
     {
-        $type = auth()->user()->type_of_user;
+        $type = JWTAuth::user()->type_of_user;
 
         if ($type == 'user') {
             return view('welcome');
@@ -66,14 +67,16 @@ class AuthController extends Controller
         }
     }
 
+    // Adjusted 'me' method to use JWTAuth
     public function me()
     {
-        return response()->json(auth()->user());
+        return response()->json(JWTAuth::user());
     }
 
+    // Adjusted 'logout' method to invalidate JWT token
     public function logout()
     {
-        auth()->logout();
+        JWTAuth::invalidate(JWTAuth::getToken());
 
         return response()->json(['message' => 'Successfully logged out']);
     }

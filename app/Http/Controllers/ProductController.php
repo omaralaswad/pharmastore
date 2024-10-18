@@ -130,7 +130,7 @@ public function show($id)
     }
 
     // Extract the image filename from the image path
-    $imageName = $product->image ? basename($product->image) : null;
+    //$imageName = $product->image ? basename($product->image) : null;
 
     // Format the response to include category, supplier, and image name
     return response()->json([
@@ -140,10 +140,10 @@ public function show($id)
         'price' => $product->price,
         'category_name' => $product->category->name ?? null,
         'supplier_name' => $product->supplier->name ?? null,
-        'image_name' => $imageName, // Return only the image filename
+        'image' => $product->image ? url($product->image) : null,  // Add url() to make it a full URL
         'created_at' => $product->created_at,
         'updated_at' => $product->updated_at,
-    ]);
+    ]);    
 }
 
 
