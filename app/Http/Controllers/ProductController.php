@@ -140,10 +140,10 @@ public function show($id)
         'price' => $product->price,
         'category_name' => $product->category->name ?? null,
         'supplier_name' => $product->supplier->name ?? null,
-        'image_name' => $$product->image ?? null,
+        'image' => $product->image ? url($product->image) : null,  // Add url() to make it a full URL
         'created_at' => $product->created_at,
         'updated_at' => $product->updated_at,
-    ]);
+    ]);    
 }
 
 

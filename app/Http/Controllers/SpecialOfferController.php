@@ -12,83 +12,86 @@ class SpecialOfferController extends Controller
 {
 
     public function show($id)
-    {
-        // محاولة العثور على العرض الخاص بناءً على id
-        $specialOffer = SpecialOffer::with(['category', 'supplier'])->find($id);
+{
+    // Attempt to find the special offer with related category and supplier
+    $specialOffer = SpecialOffer::with(['category', 'supplier'])->find($id);
 
-        // في حال عدم وجود العرض الخاص، ارجع برسالة خطأ
-        if (!$specialOffer) {
-            return response()->json(['message' => 'Special Offer not found'], 404);
-        }
-
-        // إرجاع العرض الخاص في حال العثور عليه
-        return response()->json($specialOffer);
+    // If the special offer is not found, return a 404 error
+    if (!$specialOffer) {
+        return response()->json(['message' => 'Special Offer not found'], 404);
     }
+
+    // Prepare the response data
+    $responseData = [
+        'id' => $specialOffer->id,
+        'name' => $specialOffer->name,
+        'description' => $specialOffer->description,
+        'old_price' => $specialOffer->old_price,
+        'new_price' => $specialOffer->new_price,
+        'category_id' => $specialOffer->category_id,
+        'supplier_id' => $specialOffer->supplier_id,
+        'image' => $specialOffer->image,
+        'created_at' => $specialOffer->created_at,
+        'updated_at' => $specialOffer->updated_at,
+        'category_name' => $specialOffer->category ? $specialOffer->category->name : 'N/A', // Fetch category name
+        'supplier_name' => $specialOffer->supplier ? $specialOffer->supplier->name : 'N/A' // Fetch supplier name
+    ];
+
+    // Return the full special offer data along with category and supplier names
+    return response()->json($responseData);
+}
+
+
+
     // Insert a new special offer
     public function insertOffer(Request $request)
-    {
-        try {
-            // Validate the request data
-            $validatedData = $request->validate([
-                'name' => 'required|string',
-                'description' => 'nullable|string',
-                'old_price' => 'required|numeric',
-                'new_price' => 'required|numeric',
-                'category_id' => 'required|exists:categories,id',
-                'supplier_id' => 'required|exists:suppliers,id',
-                'image' => 'nullable|image|mimes:jpg,jpeg,png|max:2048' // Validate image file with mime types and size
-            ]);
-    
-            // Create a new SpecialOffer instance
-            $specialOffer = new SpecialOffer();
-            $specialOffer->name = $validatedData['name'];
-            $specialOffer->description = $validatedData['description'];
-            $specialOffer->old_price = $validatedData['old_price'];
-            $specialOffer->new_price = $validatedData['new_price'];
-            $specialOffer->category_id = $validatedData['category_id'];
-            $specialOffer->supplier_id = $validatedData['supplier_id'];
-    
-            // Handle the image file upload
-            if ($request->hasFile('image')) {
-                $image = $request->file('image');
-                $imageName = time() . '.' . $image->getClientOriginalExtension();
-                $image->move(public_path('uploads'), $imageName);
-    
-                // Save the image path relative to the public directory
-                $specialOffer->image = 'uploads/' . $imageName;
-            } else {
-                $specialOffer->image = null; // Set to null if no image is provided
-            }
-    
-            // Save the special offer instance to the database
-            $specialOffer->save();
-    
-            // Fetch category name and supplier name
-            $categoryName = Category::find($specialOffer->category_id)?->name;
-            $supplierName = Supplier::find($specialOffer->supplier_id)?->name;
-    
-            // Return a JSON response indicating success
-            return response()->json([
-                'message' => 'Special offer created successfully',
-                'special_offer' => $specialOffer,
-                'category_name' => $categoryName,
-                'supplier_name' => $supplierName
-            ], 201);
-    
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            // Handle validation errors
-            return response()->json([
-                'message' => 'Validation failed',
-                'errors' => $e->errors()
-            ], 422);
-        } catch (\Exception $e) {
-            // Handle other exceptions
-            return response()->json([
-                'message' => 'An error occurred',
-                'error' => $e->getMessage()
-            ], 500);
-        }
+{
+    try {
+        // Validate the request data
+        $validatedData = $request->validate([
+            'product_id' => 'required|exists:products,id', // Validate the product ID
+            'new_price' => 'required|numeric', // Validate the new price
+        ]);
+
+        // Find the product by ID
+        $product = Product::find($validatedData['product_id']);
+
+        // Create a new SpecialOffer instance
+        $specialOffer = new SpecialOffer();
+        $specialOffer->name = $product->name; // Use product name for special offer
+        $specialOffer->description = $product->description; // Use product description for special offer
+        $specialOffer->old_price = $product->price; // Use product price as old price
+        $specialOffer->new_price = $validatedData['new_price']; // Use new price from request
+        $specialOffer->category_id = $product->category_id; // Use product category ID
+        $specialOffer->supplier_id = $product->supplier_id; // Use product supplier ID
+        $specialOffer->product_id = $product->id; // Assign the product ID
+        $specialOffer->image = $product->image; // Get the image from the product table
+
+        // Save the special offer instance to the database
+        $specialOffer->save();
+
+        // Return a JSON response indicating success
+        return response()->json([
+            'message' => 'Special offer created successfully',
+            'special_offer' => $specialOffer,
+        ], 201);
+
+    } catch (\Illuminate\Validation\ValidationException $e) {
+        // Handle validation errors
+        return response()->json([
+            'message' => 'Validation failed',
+            'errors' => $e->errors()
+        ], 422);
+    } catch (\Exception $e) {
+        // Handle other exceptions
+        return response()->json([
+            'message' => 'An error occurred',
+            'error' => $e->getMessage()
+        ], 500);
     }
+}
+
+
     
 
     // Delete all offers
@@ -120,9 +123,26 @@ class SpecialOfferController extends Controller
 
     // Get all offers
     public function getAllOffers()
-    {
-        $offers = SpecialOffer::all();
+{
+    // Get all offers with related category and supplier data
+    $offers = SpecialOffer::with(['category', 'supplier'])->get();
 
-        return response()->json($offers);
-    }
+    // Loop through each offer and add the category and supplier names
+    $offersWithDetails = $offers->map(function ($offer) {
+        return [
+            'id' => $offer->id,
+            'name' => $offer->name,
+            'description' => $offer->description,
+            'old_price' => $offer->old_price,
+            'new_price' => $offer->new_price,
+            'category_name' => $offer->category ? $offer->category->name : 'N/A',
+            'supplier_name' => $offer->supplier ? $offer->supplier->name : 'N/A',
+            'image' => $offer->image,
+        ];
+    });
+
+    // Return the offers with category and supplier names
+    return response()->json($offersWithDetails);
+}
+
 }
